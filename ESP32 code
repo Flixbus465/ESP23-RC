@@ -1,0 +1,136 @@
+#include <WiFi.h>
+#include <WebServer.h>
+#include <ESP32Servo.h>
+
+const char* ssid = "ESP32-Steuerung";
+const char* password = "12345678";
+
+WebServer server(80);
+
+// Pins
+const int relaisPinStart = 27;
+const int servoLenkungPin = 13;
+const int servoGasPin = 12;
+const int servoGearPin = 14;
+
+Servo servoLenkung;
+Servo servoGas;
+Servo servoGear;
+
+// HTML-Seite
+const char* html = R"rawliteral(
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ESP32 Auto Steuerung</title>
+  <style>
+    body { font-family: Arial; background: #1e1e1e; color: white; text-align: center; }
+    input[type=range] { width: 80%%; }
+    button { padding: 10px 20px; margin: 5px; font-size: 16px; }
+  </style>
+</head>
+<body>
+  <h1>Auto Steuerung</h1>
+
+  <h2>Gas</h2>
+  <input type="range" min="20" max="55" value="30" id="gasSlider">
+  <p>Gas: <span id="gasValue">30</span>°</p>
+
+  <h2>Lenkung</h2>
+  <input type="range" min="0" max="180" value="90" id="lenkSlider">
+  <p>Lenkung: <span id="lenkValue">90</span>°</p>
+
+  <h2>Gangschaltung</h2>
+  <button onclick="setGear(0)">Gang 1</button>
+  <button onclick="setGear(1)">Gang 2</button>
+  <button onclick="setGear(2)">Gang 3</button>
+  <p>Aktueller Gang: <span id="gearValue">Gang 1</span></p>
+
+  <h2>Anlasser</h2>
+  <button onclick="toggleRelay()">Starten</button>
+
+  <script>
+    const gasSlider = document.getElementById("gasSlider");
+    const gasValue = document.getElementById("gasValue");
+    gasSlider.oninput = function() {
+      gasValue.innerText = gasSlider.value;
+      fetch('/setGas?value=' + gasSlider.value);
+    };
+
+    const lenkSlider = document.getElementById("lenkSlider");
+    const lenkValue = document.getElementById("lenkValue");
+    lenkSlider.oninput = function() {
+      lenkValue.innerText = lenkSlider.value;
+      fetch('/setLenkung?value=' + lenkSlider.value);
+    };
+
+    function setGear(gear) {
+      document.getElementById("gearValue").innerText = "Gang " + (gear + 1);
+      fetch('/setGear?gear=' + gear);
+    }
+
+    function toggleRelay() {
+      fetch('/toggleRelay');
+    }
+  </script>
+</body>
+</html>
+)rawliteral";
+
+void setup() {
+  Serial.begin(115200);
+
+  // WLAN Access Point starten
+  WiFi.softAP(ssid, password);
+  Serial.println("Access Point gestartet");
+  Serial.print("IP Adresse: ");
+  Serial.println(WiFi.softAPIP());
+
+  // Pins
+  pinMode(relaisPinStart, OUTPUT);
+  digitalWrite(relaisPinStart, LOW); // Relais aus (high aktiviert)
+
+  servoLenkung.attach(servoLenkungPin);
+  servoGas.attach(servoGasPin);
+  servoGear.attach(servoGearPin);
+
+  // Webserver-Routen
+  server.on("/", HTTP_GET, []() {
+    server.send(200, "text/html", html);
+  });
+
+  server.on("/setGas", HTTP_GET, []() {
+    int val = server.arg("value").toInt();
+    servoGas.write(val);
+    server.send(200, "text/plain", "Gas gesetzt: " + String(val));
+  });
+
+  server.on("/setLenkung", HTTP_GET, []() {
+    int val = server.arg("value").toInt();
+    servoLenkung.write(val);
+    server.send(200, "text/plain", "Lenkung gesetzt: " + String(val));
+  });
+
+  server.on("/setGear", HTTP_GET, []() {
+    int gear = server.arg("gear").toInt();
+    if (gear == 0) servoGear.write(0);
+    else if (gear == 1) servoGear.write(90);
+    else if (gear == 2) servoGear.write(180);
+    server.send(200, "text/plain", "Gang gesetzt: " + String(gear + 1));
+  });
+
+  server.on("/toggleRelay", HTTP_GET, []() {
+    bool status = !digitalRead(relaisPinStart);
+    digitalWrite(relaisPinStart, status);
+    server.send(200, "text/plain", String("Relais ") + (status ? "ein" : "aus"));
+  });
+
+  server.begin();
+  Serial.println("Webserver läuft");
+}
+
+void loop() {
+  server.handleClient();
+}
